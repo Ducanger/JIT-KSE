@@ -17,6 +17,12 @@ import os
 
 logger = logging.getLogger(__name__)
 
+from transformers import AutoTokenizer, AutoModel
+import torch
+tokenizer = AutoTokenizer.from_pretrained("microsoft/codebert-base")
+model = AutoModel.from_pretrained("microsoft/codebert-base")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model.to(device)
 
 def preprocess_code_line(code, remove_python_common_tokens=False):
     code = code.replace('(', ' ').replace(')', ' ').replace('{', ' ').replace('}', ' ').replace('[', ' ').replace(']',
@@ -42,6 +48,27 @@ def preprocess_code_line(code, remove_python_common_tokens=False):
     else:
         return code.strip()
 
+def hunk_empty(hunk):
+    if hunk.strip() == '':
+        return True
+
+def get_hunk_from_diff(diff):
+    hunk_list = []
+    hunk = ''
+    for line in diff.splitlines():
+        if line.startswith(('+', '-')): 
+            hunk += line.strip() + '\n'
+        else:
+            if not hunk_empty(hunk): # finish a hunk 
+                hunk = hunk [:-1]
+                hunk_list.append(hunk)
+                hunk = ''
+
+    if not hunk_empty(hunk): 
+        hunk_list.append(hunk)
+    
+    return hunk_list
+
 
 class InputFeatures(object):
     """A single set of features of data."""
@@ -59,42 +86,123 @@ def convert_examples_to_features(item, cls_token='[CLS]', sep_token='[SEP]', seq
                                  sequence_b_segment_id=1,
                                  cls_token_segment_id=1, pad_token_segment_id=0, pad_token=0,
                                  mask_padding_with_zero=True, no_abstraction=True):
-    # source
-    commit_id, files, msg, label, tokenizer, args, manual_features = item
-    label = int(label)
-    added_tokens = []
-    removed_tokens = []
-    msg_tokens = tokenizer.tokenize(msg)
+    # #-----------------------------------------
+    # # JITFine
+    # #-----------------------------------------
+
+    # commit_id, files, msg, label, tokenizer, args, manual_features = item
+    # label = int(label)
+    # added_tokens = []
+    # removed_tokens = []
+    # msg_tokens = tokenizer.tokenize(msg)
+    # msg_tokens = msg_tokens[:min(args.max_msg_length, len(msg_tokens))]
+    # # for file_codes in files:
+    # file_codes = files
+    # if no_abstraction:
+    #     added_codes = [' '.join(line.split()) for line in file_codes['added_code']]
+    # else:
+    #     added_codes = [preprocess_code_line(line, False) for line in file_codes['added_code']]
+    # codes = '[ADD]'.join([line for line in added_codes if len(line)])
+    # added_tokens.extend(tokenizer.tokenize(codes))
+    # if no_abstraction:
+    #     removed_codes = [' '.join(line.split()) for line in file_codes['removed_code']]
+    # else:
+    #     removed_codes = [preprocess_code_line(line, False) for line in file_codes['removed_code']]
+    # codes = '[DEL]'.join([line for line in removed_codes if len(line)])
+    # removed_tokens.extend(tokenizer.tokenize(codes))
+
+    # input_tokens = msg_tokens + ['[ADD]'] + added_tokens + ['[DEL]'] + removed_tokens
+
+    # input_tokens = input_tokens[:512 - 2]
+    # input_tokens = [tokenizer.cls_token] + input_tokens + [tokenizer.sep_token]
+    # input_ids = tokenizer.convert_tokens_to_ids(input_tokens)
+    # input_mask = [1 if mask_padding_with_zero else 0] * len(input_ids)
+
+    # # Zero-pad up to the sequence length.
+    # padding_length = 512 - len(input_ids)
+
+    # input_ids = input_ids + ([pad_token] * padding_length)
+    # input_mask = input_mask + ([0 if mask_padding_with_zero else 1] * padding_length)
+    # assert len(input_ids) == 512
+    # assert len(input_mask) == 512
+
+    # #-----------------------------------------
+    # # Version 1: fist 512 token
+    # #-----------------------------------------
+
+    # code =""
+    # for line in diff.splitlines():
+    #     if len(line) > 0 and line[0] != "@": 
+    #         if line[0] == "+" or line[0] == "-": 
+    #             line = " " + line[1:]
+    #             code += preprocess_code_line(line, False) + "\n"
+
+    # code_tokens = tokenizer.tokenize(code)
+    # input_tokens = msg_tokens + [tokenizer.sep_token] + code_tokens
+    # input_tokens = input_tokens[:512 - 2]
+    # input_tokens = [tokenizer.cls_token] + input_tokens + [tokenizer.sep_token]
+
+    # input_ids = tokenizer.convert_tokens_to_ids(input_tokens)
+    # input_mask = [1 if mask_padding_with_zero else 0] * len(input_ids)
+
+    # # Zero-pad up to the sequence length.
+    # padding_length = 512 - len(input_ids)
+
+    # input_ids = input_ids + ([pad_token] * padding_length)
+    # input_mask = input_mask + ([0 if mask_padding_with_zero else 1] * padding_length)
+    # assert len(input_ids) == 512
+    # assert len(input_mask) == 512
+
+    # #-----------------------------------------
+    # Version 2: Hunks
+    # #-----------------------------------------
+
+    commit_id, diff, msg, label, tokenizer, args, manual_features = item
+    msg_tokens = tokenizer.tokenize(str(msg))
     msg_tokens = msg_tokens[:min(args.max_msg_length, len(msg_tokens))]
-    # for file_codes in files:
-    file_codes = files
-    if no_abstraction:
-        added_codes = [' '.join(line.split()) for line in file_codes['added_code']]
-    else:
-        added_codes = [preprocess_code_line(line, False) for line in file_codes['added_code']]
-    codes = '[ADD]'.join([line for line in added_codes if len(line)])
-    added_tokens.extend(tokenizer.tokenize(codes))
-    if no_abstraction:
-        removed_codes = [' '.join(line.split()) for line in file_codes['removed_code']]
-    else:
-        removed_codes = [preprocess_code_line(line, False) for line in file_codes['removed_code']]
-    codes = '[DEL]'.join([line for line in removed_codes if len(line)])
-    removed_tokens.extend(tokenizer.tokenize(codes))
 
-    input_tokens = msg_tokens + ['[ADD]'] + added_tokens + ['[DEL]'] + removed_tokens
+    max_hunk = 16
+    max_len_hunk = 256
+    input_ids = []
+    input_mask = []
+    input_tokens = []
 
-    input_tokens = input_tokens[:512 - 2]
-    input_tokens = [tokenizer.cls_token] + input_tokens + [tokenizer.sep_token]
-    input_ids = tokenizer.convert_tokens_to_ids(input_tokens)
-    input_mask = [1 if mask_padding_with_zero else 0] * len(input_ids)
+    hunks = get_hunk_from_diff(diff)
+    for hunk in hunks[:max_hunk]:
+        is_add_sep=False
+        hunk_tokens = []
+        for line in hunk.splitlines():
+            if line.startswith('+') and is_add_sep==False:
+                hunk_tokens += [tokenizer.sep_token]
+                is_add_sep=True
+            line = preprocess_code_line(line[1:])
+            hunk_tokens += tokenizer.tokenize(line)
+        
+        hunk_tokens = hunk_tokens[:max_len_hunk]
+        combine_tokens = [tokenizer.cls_token]+ msg_tokens + [tokenizer.sep_token] + hunk_tokens + [tokenizer.eos_token]
+        mask = [1]*min(len(combine_tokens), max_len_hunk+args.max_msg_length+3) + [0]*(max_len_hunk+args.max_msg_length+3-len(combine_tokens)) 
+        combine_tokens += [tokenizer.pad_token]*(max_len_hunk+args.max_msg_length+3-len(combine_tokens))
 
-    # Zero-pad up to the sequence length.
-    padding_length = 512 - len(input_ids)
+        combine_ids = tokenizer.convert_tokens_to_ids(combine_tokens) 
+        assert len(combine_ids) == max_len_hunk+args.max_msg_length+3, print(len(combine_ids))
+        input_ids.append(combine_ids)
+        input_mask.append(mask)
+    
+    assert len(input_ids) <= max_hunk, print(len(input_ids))
 
-    input_ids = input_ids + ([pad_token] * padding_length)
-    input_mask = input_mask + ([0 if mask_padding_with_zero else 1] * padding_length)
-    assert len(input_ids) == 512
-    assert len(input_mask) == 512
+    for i in range(max_hunk-len(input_ids)): 
+        input_ids.append([1]*(max_len_hunk+args.max_msg_length+3))
+        input_mask.append([0]*(max_len_hunk+args.max_msg_length+3))
+    
+    input_ids = torch.from_numpy(np.array(input_ids)).to(device)
+    attention_mask = torch.from_numpy(np.array(input_mask)).to(device)
+
+    out = model( 
+            input_ids=torch.tensor(input_ids, device=device), 
+            attention_mask=torch.tensor(attention_mask, device=device), 
+    )
+    out = out[0][:, 0, :].cpu().detach().numpy().mean(axis=0)
+    input_ids = list(out)  
 
     return InputFeatures(commit_id=commit_id,
                          input_ids=input_ids,
@@ -120,8 +228,9 @@ class TextDataset(Dataset):
         self.args = args
         changes_filename, features_filename = file_path
 
+        # ddata = pd.read_pickle(changes_filename)
         data = []
-        ddata = pd.read_pickle(changes_filename)
+        df = pd.read_csv(changes_filename)
 
         features_data = pd.read_pickle(features_filename)
         features_data = convert_dtype_dataframe(features_data, manual_features_columns)
@@ -132,11 +241,16 @@ class TextDataset(Dataset):
         # manual_features = features_data[manual_features_columns].to_numpy()
         features_data[manual_features_columns] = manual_features
 
-        commit_ids, labels, msgs, codes = ddata
-        for commit_id, label, msg, files in zip(commit_ids, labels, msgs, codes):
-            manual_features = features_data[features_data['commit_hash'] == commit_id][
-                manual_features_columns].to_numpy().squeeze()
-            data.append((commit_id, files, msg, label, tokenizer, args, manual_features))
+        for i in range(len(df)):
+            manual_features = features_data[features_data['commit_hash'] == df['commit_id'][i]][manual_features_columns].to_numpy().squeeze()
+            assert len(manual_features) == 14, print(df['commit_id'][i])
+            data.append((df['commit_id'][i], df['diff'][i], df['message'][i], df['label'][i], tokenizer, args, manual_features))
+
+        # commit_ids, labels, msgs, codes = ddata
+        # for commit_id, label, msg, files in zip(commit_ids, labels, msgs, codes):
+        #     manual_features = features_data[features_data['commit_hash'] == commit_id][
+        #         manual_features_columns].to_numpy().squeeze()
+        #     data.append((commit_id, files, msg, label, tokenizer, args, manual_features))
         # only use 20% valid data to keep best model
         # convert example to input features
         if mode == 'train':

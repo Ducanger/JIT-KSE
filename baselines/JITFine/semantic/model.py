@@ -18,7 +18,7 @@ class RobertaClassificationHead(nn.Module):
         self.args = args
 
     def forward(self, features, **kwargs):
-        x = features[:, 0, :]  # take <s> token (equiv. to [CLS])
+        x = features#[:, 0, :]  # take <s> token (equiv. to [CLS])
         x = self.dropout(x)
         x = self.out_proj(x)
         return x
@@ -35,10 +35,10 @@ class Model(nn.Module):
 
     def forward(self, inputs_ids, attn_masks,
                 labels=None):
-        outputs = \
-            self.encoder(input_ids=inputs_ids, attention_mask=attn_masks)[0]
-        logits = self.classifier(outputs)
+        # outputs = \
+        #     self.encoder(input_ids=inputs_ids, attention_mask=attn_masks)[0]
 
+        logits = self.classifier(inputs_ids)
         prob = torch.sigmoid(logits)
         if labels is not None:
             loss_fct = BCELoss()
